@@ -1,0 +1,24 @@
+[package]
+name = "scrcpy-mac-ui"
+version = "0.1.0"
+description = "A native macOS controller for scrcpy"
+authors = ["admin"]
+edition = "2021"
+
+[lib]
+name = "scrcpy_mac_ui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["process", "io-util", "rt", "macros", "time", "sync"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

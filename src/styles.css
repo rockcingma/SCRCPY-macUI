@@ -1,0 +1,144 @@
+/* Design tokens — PRD §3.4. macOS-native via system font + vibrancy. */
+:root {
+  --accent: #007aff;
+  --text: rgba(0, 0, 0, 0.85);
+  --text-secondary: rgba(0, 0, 0, 0.55);
+  --hairline: rgba(0, 0, 0, 0.1);
+  --radius-md: 8px;
+  --radius-sm: 6px;
+  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.15);
+  --space-unit: 8px;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+  --duration-fast: 80ms;
+  --duration-normal: 200ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #0a84ff;
+    --text: rgba(255, 255, 255, 0.92);
+    --text-secondary: rgba(255, 255, 255, 0.55);
+    --hairline: rgba(255, 255, 255, 0.1);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: var(--text);
+  /* Transparent so the native NSVisualEffectView vibrancy shows through. */
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+.launcher {
+  padding: calc(var(--space-unit) * 2);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 3);
+}
+
+.device-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-unit);
+  padding: var(--space-unit);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dot-gray { background: #8e8e93; }
+.dot-yellow { background: #ffcc00; }
+.dot-orange { background: #ff9500; }
+.dot-green { background: #34c759; }
+.dot-blue { background: var(--accent); }
+
+.device-info { flex: 1; }
+.device-label { font-weight: 600; font-size: 16px; }
+.device-serial { font-size: 12px; color: var(--text-secondary); }
+.device-count { font-size: 12px; color: var(--text-secondary); }
+
+.refresh {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.primary-launch {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px 16px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: opacity var(--duration-normal) ease-out;
+}
+.primary-launch:disabled { opacity: 0.4; cursor: not-allowed; }
+.primary-label { font-weight: 600; font-size: 15px; }
+.primary-spec { font-size: 12px; opacity: 0.85; }
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-unit);
+}
+
+.preset-mini {
+  padding: var(--space-unit);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+.preset-mini:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.error-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-unit);
+  padding: var(--space-unit);
+  background: #ff3b30;
+  color: white;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.error-bar button {
+  background: rgba(255, 255, 255, 0.25);
+  border: none;
+  color: white;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.install-adb {
+  margin-top: 4px;
+  padding: 4px 10px;
+  background: #ff9500;
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.loading { padding: 24px; text-align: center; color: var(--text-secondary); }
