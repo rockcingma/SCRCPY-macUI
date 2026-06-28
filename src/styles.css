@@ -31,9 +31,14 @@ body {
   font-family: var(--font-display);
   font-size: 14px;
   color: var(--text);
-  /* Transparent so the native NSVisualEffectView vibrancy shows through. */
-  background: transparent;
+  /* Solid fallback background. Phase 2 will swap to `transparent` once the
+     window-vibrancy plugin is wired so NSVisualEffectView shows through. */
+  background: #f6f6f6;
   -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  body { background: #1e1e1e; }
 }
 
 .launcher {
