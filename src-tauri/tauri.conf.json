@@ -18,6 +18,22 @@
         "width": 420,
         "height": 640,
         "resizable": false
+      },
+      {
+        "label": "float",
+        "url": "index.html#float",
+        "title": "scrcpy Float Panel",
+        "width": 200,
+        "height": 560,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visibleOnAllWorkspaces": true,
+        "visible": false,
+        "transparent": true,
+        "shadow": false,
+        "focus": false
       }
     ],
     "security": {

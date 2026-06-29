@@ -26,6 +26,39 @@ export type AppError =
   | { kind: "WirelessConnectFailed"; message: string }
   | { kind: "Io"; message: string };
 
+// Mirrors Rust KeyAction (snake_case serde wire format).
+export type KeyAction =
+  | "home"
+  | "back"
+  | "recents"
+  | "lock"
+  | "screenshot"
+  | "volume_up"
+  | "volume_down"
+  | "notifications"
+  | "rotate"
+  | "close";
+
+export interface FloatButton {
+  action: KeyAction;
+  label: string;
+  // SF Symbol name (kept symbolic — rendered as Unicode glyph fallback).
+  icon: string;
+}
+
+export const FLOAT_BUTTONS: FloatButton[] = [
+  { action: "home", label: "主屏幕", icon: "⌂" },
+  { action: "back", label: "返回", icon: "‹" },
+  { action: "recents", label: "多任务", icon: "▭" },
+  { action: "lock", label: "锁屏", icon: "⌃" },
+  { action: "screenshot", label: "截图", icon: "◉" },
+  { action: "volume_up", label: "音量+", icon: "▲" },
+  { action: "volume_down", label: "音量−", icon: "▼" },
+  { action: "notifications", label: "通知栏", icon: "≡" },
+  { action: "rotate", label: "旋转", icon: "↻" },
+  { action: "close", label: "关闭投屏", icon: "✕" },
+];
+
 export function errorToMessage(e: AppError): string {
   switch (e.kind) {
     case "AdbNotFound":

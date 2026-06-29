@@ -41,6 +41,10 @@ body {
   body { background: #1e1e1e; }
 }
 
+/* Float window owns its own backdrop on .float-panel; body must be
+   transparent for the rounded corners + drop shadow to render correctly. */
+body:has(.float-panel) { background: transparent; }
+
 .launcher {
   padding: calc(var(--space-unit) * 2);
   display: flex;
@@ -147,3 +151,137 @@ body {
 }
 
 .loading { padding: 24px; text-align: center; color: var(--text-secondary); }
+
+/* ── Float panel ─────────────────────────────────────────────────────
+   Lives in its own Tauri window (label=float). Window is 200px wide:
+   the right 56px is the actual button column with the dark backdrop;
+   the left 144px is transparent and hosts the hover tooltip when a
+   button is focused. The tooltip floats over scrcpy / the desktop —
+   transparent regions of a Tauri window don't capture mouse events,
+   so hover detection is on the button itself. */
+
+.float-panel {
+  width: 56px;
+  height: 100vh;
+  /* Align to the right edge of the (200px wide) window so the panel
+     hugs the screen edge and the transparent area is on the left for
+     tooltips. */
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(28, 28, 30, 0.88);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: var(--shadow-float);
+  /* visible so button tooltips can render into the transparent left strip */
+  overflow: visible;
+}
+
+.drag-handle {
+  width: 36px;
+  height: 16px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 10px;
+  letter-spacing: -2px;
+  cursor: move;
+  user-select: none;
+}
+
+.drag-handle:hover { color: rgba(255, 255, 255, 0.75); }
+
+.float-buttons {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* visible so the per-button ::after tooltip isn't clipped */
+  overflow: visible;
+}
+
+.float-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0 auto;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) ease-out,
+              background-color var(--duration-fast) ease-out;
+}
+
+.float-button:hover { background: rgba(255, 255, 255, 0.10); }
+
+/* Custom hover tooltip — WKWebView in transparent/decorations-less windows
+   doesn't render the native `title` tooltip, so we draw our own. Renders
+   to the LEFT of the button, into the window's transparent left strip. */
+.float-button[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.88);
+  color: white;
+  border-radius: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* 80ms accent flash on press — PRD §3.5. */
+.float-button.flash-press {
+  border-color: var(--accent);
+  background: rgba(10, 132, 255, 0.18);
+}
+
+/* 150ms red flash on failure. */
+.float-button.flash-error {
+  border-color: #ff3b30;
+  background: rgba(255, 59, 48, 0.20);
+}
+
+.float-icon {
+  font-size: 18px;
+  line-height: 1;
+  font-family: var(--font-display);
+}
+
+.accessibility-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+  padding: 4px;
+  border-radius: 6px;
+  background: #ff9500;
+  color: white;
+  font-size: 9px;
+  text-align: center;
+}
+
+.accessibility-banner a,
+.accessibility-banner .accessibility-link {
+  color: white;
+  text-decoration: underline;
+  font-size: 9px;
+  background: none;
+  border: none;
+  padding: 1px 0;
+  cursor: pointer;
+}
