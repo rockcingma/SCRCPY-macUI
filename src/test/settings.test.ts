@@ -77,6 +77,7 @@ describe("coerceSettings", () => {
     expect(coerceSettings({ lastPresetId: "x", ipHistory: ["1.2.3.4"] })).toEqual({
       lastPresetId: "x",
       ipHistory: ["1.2.3.4"],
+      recordDir: null,
     });
   });
   it("drops non-string ipHistory entries and caps length", () => {
@@ -84,5 +85,15 @@ describe("coerceSettings", () => {
     const result = coerceSettings(raw);
     expect(result.lastPresetId).toBeNull();
     expect(result.ipHistory).toEqual(["a", "b", "c", "d", "e"]);
+    expect(result.recordDir).toBeNull();
+  });
+  it("preserves a non-empty recordDir", () => {
+    const result = coerceSettings({ recordDir: "/Users/me/Movies" });
+    expect(result.recordDir).toBe("/Users/me/Movies");
+  });
+  it("treats blank/non-string recordDir as null", () => {
+    expect(coerceSettings({ recordDir: "" }).recordDir).toBeNull();
+    expect(coerceSettings({ recordDir: "   " }).recordDir).toBeNull();
+    expect(coerceSettings({ recordDir: 42 }).recordDir).toBeNull();
   });
 });

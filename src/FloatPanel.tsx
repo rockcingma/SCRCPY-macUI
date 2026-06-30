@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Backend } from "./backend";
-import { FLOAT_BUTTONS, type AppError, type KeyAction } from "./types";
+import { FLOAT_BUTTONS, type KeyAction } from "./types";
 
 interface FloatPanelProps {
   backend: Backend;
@@ -8,67 +8,118 @@ interface FloatPanelProps {
 
 type ButtonFlash = "none" | "press" | "error";
 
-// Float panel — runtime control surface that appears next to scrcpy.
-// Drag-region is delegated to Tauri (data-tauri-drag-region), so we only
-// handle button presses, press-feedback animation, and error states.
+// Float panel — runtime control surface that appears beside scrcpy.
+// Nav buttons route to `adb shell input keyevent`; recording, screen-off and
+// audio-host are stateful toggles (ARCHITECTURE §2) that relaunch scrcpy with
+// extra flags appended (--record / --turn-screen-off+--stay-awake / --no-audio).
+//
+// Layout:
+//   drag handle → screen toggle → audio toggle → divider
+//   nav buttons (FLOAT_BUTTONS minus close)
+//   record toggle → close button
+//
+// Record sits just above close because it's not a high-frequency action and
+// the user asked for it to be the second-to-last button.
 export function FloatPanel({ backend }: FloatPanelProps) {
   const [flash, setFlash] = useState<Record<KeyAction, ButtonFlash>>(() => {
     const init = {} as Record<KeyAction, ButtonFlash>;
     for (const b of FLOAT_BUTTONS) init[b.action] = "none";
     return init;
   });
-  const [accessibilityWarning, setAccessibilityWarning] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordBusy, setRecordBusy] = useState(false);
+  // Brief "saved to …" toast after a recording stops.
+  const [savedToast, setSavedToast] = useState<string | null>(null);
+  // Phone-screen-off toggle. Independent of recording — both can be on at
+  // once, the backend rebuilds argv from base_args + every active flag.
+  const [screenOff, setScreenOff] = useState(false);
+  const [screenBusy, setScreenBusy] = useState(false);
+  // Audio routing: true = Mac plays (scrcpy default), false = device plays.
+  const [hostAudio, setHostAudio] = useState(true);
+  const [audioBusy, setAudioBusy] = useState(false);
 
-  const setButtonFlash = useCallback(
-    (action: KeyAction, kind: ButtonFlash) => {
-      setFlash((prev) => ({ ...prev, [action]: kind }));
-    },
-    [],
-  );
+  const setButtonFlash = useCallback((action: KeyAction, kind: ButtonFlash) => {
+    setFlash((prev) => ({ ...prev, [action]: kind }));
+  }, []);
 
   const press = useCallback(
     async (action: KeyAction) => {
-      // PRD §3.5 reflex: 80ms accent outline flash, independent of backend
-      // success. This is what tells the user "yes, I registered your click."
+      // 80ms accent flash, independent of backend result (PRD §3.5).
       setButtonFlash(action, "press");
       window.setTimeout(() => setButtonFlash(action, "none"), 80);
-
       try {
         await backend.sendKey(action);
-      } catch (e) {
-        // 150ms red flash on failure (PRD §3.5).
+      } catch {
         setButtonFlash(action, "error");
         window.setTimeout(() => setButtonFlash(action, "none"), 150);
-        const err = e as AppError;
-        if (err && err.kind === "AccessibilityDenied") {
-          setAccessibilityWarning(true);
-        }
       }
     },
     [backend, setButtonFlash],
   );
 
-  // Probe accessibility once on mount; surface a banner if denied.
-  // Re-probe is wired to the "重试" button below so users can confirm
-  // after they flip the System Settings switch without restarting the app.
-  const reprobeAccessibility = useCallback(async () => {
-    const ok = await backend.accessibilityStatus();
-    setAccessibilityWarning(!ok);
-  }, [backend]);
+  const toggleRecording = useCallback(async () => {
+    if (recordBusy) return; // relaunch takes a moment; ignore double-clicks
+    setRecordBusy(true);
+    try {
+      const state = await backend.toggleRecording();
+      setRecording(state.recording);
+      if (!state.recording && state.savedPath) {
+        // Show just the filename — the panel is narrow.
+        const name = state.savedPath.split("/").pop() ?? state.savedPath;
+        setSavedToast(`已保存 ${name}`);
+        window.setTimeout(() => setSavedToast(null), 3000);
+      }
+    } catch {
+      // Leave state unchanged on failure; the user can retry.
+    } finally {
+      setRecordBusy(false);
+    }
+  }, [backend, recordBusy]);
 
+  const toggleScreenOff = useCallback(async () => {
+    // Each toggle relaunches scrcpy — ignore re-entrant clicks while the
+    // backend is still spinning up, same as the recording button.
+    if (screenBusy) return;
+    setScreenBusy(true);
+    try {
+      const state = await backend.toggleScreenOff();
+      setScreenOff(state.screenOff);
+    } catch {
+      // Leave state unchanged on failure; the user can retry.
+    } finally {
+      setScreenBusy(false);
+    }
+  }, [backend, screenBusy]);
+
+  const toggleAudioHost = useCallback(async () => {
+    if (audioBusy) return;
+    setAudioBusy(true);
+    try {
+      const state = await backend.toggleAudioHost();
+      setHostAudio(state.hostAudio);
+    } catch {
+      // Same as the other stateful toggles — silently leave state unchanged.
+    } finally {
+      setAudioBusy(false);
+    }
+  }, [backend, audioBusy]);
+
+  // Cmd+O shortcut. Scoped to this webview's keydown (not a system-global
+  // shortcut) so the rest of macOS still owns Cmd+O — it only fires when our
+  // float or main window has focus. preventDefault stops the webview's
+  // built-in "open file" default. The panel only mounts while scrcpy is
+  // running, so the listener naturally has the right lifetime.
   useEffect(() => {
-    let cancelled = false;
-    void backend.accessibilityStatus().then((ok) => {
-      if (!cancelled && !ok) setAccessibilityWarning(true);
-    });
-    return () => {
-      cancelled = true;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        void toggleScreenOff();
+      }
     };
-  }, [backend]);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [toggleScreenOff]);
 
-  // Drag via the explicit Tauri API. `data-tauri-drag-region` is flaky on
-  // focus:false transparent windows, so we call startDragging() directly
-  // on mousedown over the handle.
   const startDrag = useCallback(async () => {
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -78,9 +129,13 @@ export function FloatPanel({ backend }: FloatPanelProps) {
     }
   }, []);
 
+  // Split nav buttons: the close button is rendered separately at the bottom
+  // so the record toggle can sit just above it (user-requested order).
+  const navButtons = FLOAT_BUTTONS.filter((b) => b.action !== "close");
+  const closeButton = FLOAT_BUTTONS.find((b) => b.action === "close");
+
   return (
     <div className="float-panel">
-      {/* Drag handle. mousedown → Tauri startDragging() moves the window. */}
       <div
         className="drag-handle"
         title="拖动"
@@ -88,27 +143,40 @@ export function FloatPanel({ backend }: FloatPanelProps) {
       >
         <span aria-hidden>⋮⋮</span>
       </div>
-      {accessibilityWarning && (
-        <div className="accessibility-banner" role="alert">
-          <span>需开启辅助功能</span>
-          <button
-            type="button"
-            className="accessibility-link"
-            onClick={() => void backend.openAccessibilitySettings()}
-          >
-            打开设置
-          </button>
-          <button
-            type="button"
-            className="accessibility-link"
-            onClick={() => void reprobeAccessibility()}
-          >
-            已授权,重试
-          </button>
-        </div>
-      )}
+
+      {/* Phone-screen toggle — Cmd+O also triggers this. ◐ = phone screen on
+          (mirror + physical display lit), ○ = physical display dark. */}
+      <button
+        className={`screen-button ${screenOff ? "off" : ""}`}
+        aria-label={screenOff ? "开启手机屏幕" : "关闭手机屏幕"}
+        aria-pressed={screenOff}
+        data-tooltip={screenOff ? "开启手机屏幕 (⌘O)" : "关闭手机屏幕 (⌘O)"}
+        disabled={screenBusy}
+        onClick={() => void toggleScreenOff()}
+      >
+        <span className="screen-icon" aria-hidden>
+          {screenOff ? "○" : "◐"}
+        </span>
+      </button>
+
+      {/* Audio routing — ♪ = Mac plays, S = device speakers. Stateful toggle. */}
+      <button
+        className={`audio-button ${hostAudio ? "" : "device"}`}
+        aria-label={hostAudio ? "切换到手机播放" : "切换到 Mac 播放"}
+        aria-pressed={!hostAudio}
+        data-tooltip={hostAudio ? "音频：Mac 播放" : "音频：手机播放"}
+        disabled={audioBusy}
+        onClick={() => void toggleAudioHost()}
+      >
+        <span className="audio-icon" aria-hidden>
+          {hostAudio ? "♪" : "S"}
+        </span>
+      </button>
+
+      <div className="float-divider" aria-hidden />
+
       <div className="float-buttons">
-        {FLOAT_BUTTONS.map((b) => (
+        {navButtons.map((b) => (
           <button
             key={b.action}
             className={`float-button flash-${flash[b.action]}`}
@@ -119,7 +187,40 @@ export function FloatPanel({ backend }: FloatPanelProps) {
             <span className="float-icon">{b.icon}</span>
           </button>
         ))}
+
+        {/* Recording toggle — second-to-last, low-frequency action. */}
+        <button
+          className={`record-button ${recording ? "recording" : ""}`}
+          aria-label={recording ? "停止录制" : "开始录制"}
+          aria-pressed={recording}
+          data-tooltip={recording ? "停止录制" : "开始录制"}
+          disabled={recordBusy}
+          onClick={() => void toggleRecording()}
+        >
+          <span className="record-icon" aria-hidden>
+            {recording ? "■" : "●"}
+          </span>
+        </button>
+
+        {/* Close mirroring — terminal action, lives at the very bottom. */}
+        {closeButton && (
+          <button
+            key={closeButton.action}
+            className={`float-button flash-${flash[closeButton.action]}`}
+            aria-label={closeButton.label}
+            data-tooltip={closeButton.label}
+            onClick={() => void press(closeButton.action)}
+          >
+            <span className="float-icon">{closeButton.icon}</span>
+          </button>
+        )}
       </div>
+
+      {savedToast && (
+        <div className="record-toast" role="status">
+          {savedToast}
+        </div>
+      )}
     </div>
   );
 }

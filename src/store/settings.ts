@@ -33,11 +33,15 @@ export function isValidSerial(serial: string): boolean {
 export interface Settings {
   lastPresetId: string | null;
   ipHistory: string[];
+  // Directory to save screen recordings into. null = let the backend pick the
+  // default (~/Desktop). Persisted so the user only chooses once.
+  recordDir: string | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   lastPresetId: null,
   ipHistory: [],
+  recordDir: null,
 };
 
 // Coerce arbitrary persisted JSON into a valid Settings object.
@@ -49,5 +53,9 @@ export function coerceSettings(raw: unknown): Settings {
   const ipHistory = Array.isArray(obj.ipHistory)
     ? obj.ipHistory.filter((x): x is string => typeof x === "string").slice(0, MAX_IP_HISTORY)
     : [];
-  return { lastPresetId, ipHistory };
+  const recordDir =
+    typeof obj.recordDir === "string" && obj.recordDir.trim() !== ""
+      ? obj.recordDir
+      : null;
+  return { lastPresetId, ipHistory, recordDir };
 }

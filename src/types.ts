@@ -106,28 +106,49 @@ export const PRESETS: Preset[] = [
     label: "高画质启动",
     icon: "bolt.fill",
     spec: "1920px · 8M · 60fps",
-    args: ["--max-size=1920", "--video-bit-rate=8M", "--max-fps=60"],
+    args: [
+      "--max-size=1920",
+      "--video-bit-rate=8M",
+      "--max-fps=60",
+      "--keyboard=uhid",
+    ],
   },
   {
     id: "wifi-balanced",
     label: "WiFi 均衡",
     icon: "wifi",
     spec: "1280px · 4M · 30fps",
-    args: ["--max-size=1280", "--video-bit-rate=4M", "--max-fps=30"],
+    args: [
+      "--max-size=1280",
+      "--video-bit-rate=4M",
+      "--max-fps=30",
+      "--keyboard=uhid",
+    ],
   },
   {
     id: "game-low-latency",
     label: "游戏低延迟",
     icon: "gamecontroller.fill",
     spec: "1280px · 4M · 低延迟",
-    args: ["--max-size=1280", "--video-bit-rate=4M", "--max-fps=60", "--no-audio"],
+    args: [
+      "--max-size=1280",
+      "--video-bit-rate=4M",
+      "--max-fps=60",
+      "--no-audio",
+      "--keyboard=uhid",
+    ],
   },
   {
     id: "power-save",
     label: "省电",
     icon: "leaf.fill",
     spec: "1024px · 2M · 30fps",
-    args: ["--max-size=1024", "--video-bit-rate=2M", "--max-fps=30"],
+    args: [
+      "--max-size=1024",
+      "--video-bit-rate=2M",
+      "--max-fps=30",
+      "--keyboard=uhid",
+    ],
   },
   {
     id: "demo-readonly",
@@ -136,14 +157,39 @@ export const PRESETS: Preset[] = [
     spec: "只读 · 不可控",
     args: ["--no-control"],
   },
-  {
-    id: "record",
-    label: "录屏",
-    icon: "record.circle",
-    spec: "录制到桌面",
-    args: [], // record path injected at launch time
-  },
 ];
+
+// Recording is a Runtime Action (ARCHITECTURE §2), NOT a preset — it needs
+// start/recording/stop state and only matters while scrcpy is running.
+// Returned by the toggle_recording command so the float panel can reflect
+// the new state without a separate event.
+export interface RecordingState {
+  recording: boolean;
+  // Where the .mp4 was saved (set when a recording just STOPPED), else null.
+  savedPath: string | null;
+}
+
+// Same Runtime-Action shape as recording: toggling means relaunching scrcpy
+// with --turn-screen-off + --stay-awake appended (or removed). The backend
+// returns the new state so the float panel switches icon without an event.
+export interface ScreenOffState {
+  screenOff: boolean;
+}
+
+// Audio routing toggle. true = Mac plays the device's audio (scrcpy default),
+// false = scrcpy relaunched with --no-audio so the device speakers do.
+export interface AudioHostState {
+  hostAudio: boolean;
+}
+
+// Result of set_record_dir. Reports both the directory that's actually now in
+// effect and whether the user's chosen path was accepted, so the UI can
+// surface "fell back to default because …" without a second round-trip.
+export interface RecordDirState {
+  effective: string;
+  accepted: boolean;
+  message: string | null;
+}
 
 export function presetById(id: string): Preset | undefined {
   return PRESETS.find((p) => p.id === id);

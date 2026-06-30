@@ -77,6 +77,196 @@ body:has(.float-panel) { background: transparent; }
 .device-serial { font-size: 12px; color: var(--text-secondary); }
 .device-count { font-size: 12px; color: var(--text-secondary); }
 
+/* Device selector (multi-device dropdown) */
+.device-card-with-selector {
+  position: relative;
+}
+
+.device-selector {
+  position: relative;
+  flex: 1;
+}
+
+.device-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.device-trigger:hover {
+  background: rgba(127, 127, 127, 0.08);
+  border-color: var(--accent);
+}
+
+.device-trigger:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.15);
+}
+
+.device-trigger-content {
+  flex: 1;
+  text-align: left;
+  min-width: 0;
+}
+
+.device-name {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.device-serial {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.device-count {
+  padding: 1px 6px;
+  background: rgba(127, 127, 127, 0.12);
+  border-radius: 10px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.device-trigger-icon {
+  margin-left: 8px;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.device-trigger-icon.open {
+  transform: rotate(180deg);
+}
+
+.device-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: #ffffff;  /* 白色底 */
+  border: 1px solid #d0d0d0;  /* 浅灰边框 */
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 9999;
+}
+
+.device-list {
+  list-style: none;
+  padding: 4px;
+  margin: 0;
+}
+
+.device-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  color: #1d1d1f;  /* 深色字 */
+}
+
+.device-item:hover {
+  background: rgba(0, 0, 0, 0.06);  /* 浅灰悬停 */
+}
+
+.device-item.selected {
+  background: rgba(10, 132, 255, 0.1);  /* 浅蓝高亮 */
+}
+
+.device-item.selected .device-item-name {
+  color: #0a84ff;  /* 蓝色强调 */
+  font-weight: 600;
+}
+
+.device-item-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #34c759;
+  flex-shrink: 0;
+}
+
+.device-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-item-name {
+  font-weight: 500;
+  font-size: 13px;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #1d1d1f;  /* 深色字 */
+}
+
+.device-item-serial {
+  font-size: 11px;
+  color: #6e6e73;  /* 灰色辅助文本 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.device-item-checkmark {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #d0d0d0;  /* 灰色边框 */
+  flex-shrink: 0;
+  position: relative;
+  transition: all 0.15s ease;
+}
+
+.device-item.selected .device-item-checkmark {
+  background: #0a84ff;  /* 蓝色勾选 */
+  border-color: #0a84ff;
+}
+
+.device-item.selected .device-item-checkmark::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0px;
+  width: 3px;
+  height: 7px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
 .refresh {
   background: none;
   border: none;
@@ -119,6 +309,259 @@ body:has(.float-panel) { background: transparent; }
 }
 .preset-mini:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Recording destination row — lives below the preset grid as a quiet
+   settings affordance. Layout: label · path (flex-grow, ellipsis) · button. */
+.record-dir-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-unit);
+  margin-top: var(--space-unit);
+  padding: var(--space-unit);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.record-dir-label {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+.record-dir-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* keep the filename portion of long paths visible */
+  text-align: left;
+}
+
+.record-dir-button,
+.record-dir-reset {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.record-dir-button:hover,
+.record-dir-reset:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.record-dir-reset { width: 24px; padding: 2px 0; }
+
+.record-dir-warning {
+  margin-top: 4px;
+  padding: 4px 8px;
+  background: rgba(255, 149, 0, 0.18);
+  border-radius: 4px;
+  color: #ff9500;
+  font-size: 11px;
+}
+
+/* Keyboard usage hint */
+.keyboard-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-top: 12px;
+  background: rgba(10, 132, 255, 0.08);
+  border: 1px solid rgba(10, 132, 255, 0.2);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.hint-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.hint-content {
+  flex: 1;
+}
+
+.hint-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.hint-steps {
+  margin: 0 0 8px 0;
+  padding-left: 20px;
+  color: var(--text-secondary);
+}
+
+.hint-steps li {
+  margin-bottom: 4px;
+}
+
+.hint-steps kbd {
+  display: inline-block;
+  padding: 2px 5px;
+  background: rgba(127, 127, 127, 0.15);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.keyboard-settings-btn {
+  margin: 10px 0 8px 0;
+  padding: 8px 14px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.keyboard-settings-btn:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.keyboard-settings-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hint-note {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+.hint-code {
+  display: inline-block;
+  padding: 2px 6px;
+  margin-top: 4px;
+  background: rgba(127, 127, 127, 0.1);
+  border-radius: 3px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 10px;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+/* Wireless connection — collapsible, low-frequency. Quiet by default. */
+.wireless-section { margin-top: var(--space-unit); }
+
+.wireless-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--space-unit);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.wireless-toggle:hover { background: rgba(127, 127, 127, 0.08); }
+
+.wireless-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-unit);
+  padding: var(--space-unit) 2px 2px;
+}
+
+.wireless-history {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.wireless-label { font-size: 11px; opacity: 0.6; }
+
+.wireless-history-item {
+  padding: 2px 8px;
+  background: rgba(10, 132, 255, 0.12);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+}
+.wireless-history-item:hover { background: rgba(10, 132, 255, 0.22); }
+.wireless-history-item:disabled { opacity: 0.5; cursor: default; }
+
+.wireless-method {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-unit);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+}
+
+.wireless-method-title { font-size: 12px; font-weight: 600; }
+
+.wireless-hint {
+  margin: 0;
+  font-size: 11px;
+  opacity: 0.6;
+  line-height: 1.4;
+}
+
+.wireless-row { display: flex; gap: 6px; }
+
+.wireless-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+}
+.wireless-input-sm { flex: 0 0 72px; }
+.wireless-input:disabled { opacity: 0.5; }
+
+.wireless-btn {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: white;
+  font-size: 12px;
+  cursor: pointer;
+}
+.wireless-btn:hover { opacity: 0.9; }
+.wireless-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.wireless-msg {
+  padding: 4px 8px;
+  background: rgba(127, 127, 127, 0.12);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .error-bar {
   display: flex;
   align-items: center;
@@ -154,8 +597,8 @@ body:has(.float-panel) { background: transparent; }
 
 /* ── Float panel ─────────────────────────────────────────────────────
    Lives in its own Tauri window (label=float). Window is 200px wide:
-   the right 56px is the actual button column with the dark backdrop;
-   the left 144px is transparent and hosts the hover tooltip when a
+   the left 56px is the actual button column with the dark backdrop;
+   the right 144px is transparent and hosts the hover tooltip when a
    button is focused. The tooltip floats over scrcpy / the desktop —
    transparent regions of a Tauri window don't capture mouse events,
    so hover detection is on the button itself. */
@@ -163,10 +606,12 @@ body:has(.float-panel) { background: transparent; }
 .float-panel {
   width: 56px;
   height: 100vh;
-  /* Align to the right edge of the (200px wide) window so the panel
-     hugs the screen edge and the transparent area is on the left for
-     tooltips. */
-  margin-left: auto;
+  /* Hug the LEFT edge of the (200px-wide) Tauri window so the visible
+     control strip's left edge equals the window's x position. The backend
+     positions the window using x = scrcpy.right_edge + GAP, so the strip
+     snaps cleanly to the mirror. Tooltips render to the right, into the
+     transparent strip. */
+  margin-right: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -224,12 +669,15 @@ body:has(.float-panel) { background: transparent; }
 .float-button:hover { background: rgba(255, 255, 255, 0.10); }
 
 /* Custom hover tooltip — WKWebView in transparent/decorations-less windows
-   doesn't render the native `title` tooltip, so we draw our own. Renders
-   to the LEFT of the button, into the window's transparent left strip. */
-.float-button[data-tooltip]:hover::after {
+   doesn't render the native `title` tooltip, so we draw our own. The panel
+   hugs the LEFT edge of the (200px) Tauri window, so the transparent strip
+   sits on the RIGHT — that's where the tooltip lands.
+   Applied to every panel button with [data-tooltip] (nav, record, screen,
+   audio), so stateful toggles get hints too. */
+.float-panel [data-tooltip]:hover::after {
   content: attr(data-tooltip);
   position: absolute;
-  right: calc(100% + 10px);
+  left: calc(100% + 10px);
   top: 50%;
   transform: translateY(-50%);
   padding: 4px 8px;
@@ -284,4 +732,122 @@ body:has(.float-panel) { background: transparent; }
   border: none;
   padding: 1px 0;
   cursor: pointer;
+}
+
+/* Recording toggle — stateful, sits above the nav buttons. */
+.record-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0 auto;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: transparent;
+  color: #ff453a;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) ease-out;
+}
+
+.record-button:hover { background: rgba(255, 69, 58, 0.15); }
+.record-button:disabled { opacity: 0.5; cursor: default; }
+
+.record-button.recording {
+  background: rgba(255, 69, 58, 0.22);
+  border-color: #ff453a;
+  animation: record-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes record-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 69, 58, 0.5); }
+  50% { box-shadow: 0 0 0 4px rgba(255, 69, 58, 0); }
+}
+
+.record-icon { line-height: 1; }
+
+.record-toast {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 56px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.88);
+  color: white;
+  border-radius: 5px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Phone-screen toggle — same shape as the record button, neutral tint so it
+   reads as a secondary stateful action. */
+.screen-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0 auto;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 16px;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) ease-out;
+}
+
+.screen-button:hover { background: rgba(255, 255, 255, 0.12); }
+.screen-button:disabled { opacity: 0.5; cursor: default; }
+
+.screen-button.off {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.45);
+  color: white;
+}
+
+.screen-icon { line-height: 1; }
+
+/* Audio routing toggle — same shape/colors as the screen toggle. Active
+   state (.device) means "route to phone speakers", to match the visual
+   pattern of "stateful flag is on". */
+.audio-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0 auto;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 16px;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) ease-out;
+}
+
+.audio-button:hover { background: rgba(255, 255, 255, 0.12); }
+.audio-button:disabled { opacity: 0.5; cursor: default; }
+
+.audio-button.device {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.45);
+  color: white;
+}
+
+.audio-icon { line-height: 1; }
+
+.float-divider {
+  width: 24px;
+  height: 1px;
+  margin: 6px auto;
+  background: rgba(255, 255, 255, 0.15);
 }

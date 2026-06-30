@@ -1,15 +1,29 @@
-// Key injection via AppleScript → scrcpy SDL window (PRD §3.2, D1).
+// Key injection via `adb shell input keyevent` (PRD §3.2, revised).
 //
-// Why AppleScript and not `adb shell input keyevent`?
-//   `adb shell input` cold-starts an Android JVM per call → 0.5–1s latency.
-//   AppleScript dispatches a host-side keystroke into the focused scrcpy
-//   window, which then forwards over scrcpy's persistent control socket at
-//   ~50ms total. The user feels the click register.
+// Why adb and not AppleScript (the original D1 choice)?
+//   The AppleScript path (`tell process "scrcpy" ... keystroke`) was proven
+//   broken in testing: macOS `keystroke` always targets the FOCUSED app, and
+//   scrcpy's shortcuts (Cmd+H Home, Cmd+S Recents, Cmd+P Lock) collide with
+//   macOS system shortcuts (Hide, Save, Print). When the float panel has
+//   focus, Cmd+H hid OUR OWN window. When scrcpy had focus, Cmd+H hid scrcpy.
+//   Either way the keystroke route is unusable.
 //
-// Trust boundary: every button maps to a fixed AppleScript template here.
-// User input never enters the script body — only the action enum does.
+//   adb keyevent talks straight to the Android input system:
+//     - No window focus dependency (can't mis-target the Mac UI).
+//     - No macOS system-shortcut collision (it's an Android keycode, not a
+//       Mac keystroke).
+//     - No Accessibility permission needed (adb is a normal subprocess).
+//   Latency is ~100-400ms per call. For occasional nav-button taps on a
+//   personal tool, that's fine — and it actually works, which beats a
+//   theoretically-faster path that doesn't.
+//
+// Trust boundary: KeyAction is a fixed enum (deserialized from the frontend),
+// and the serial is validated against a whitelist before reaching argv. No
+// user-controlled string ever enters a shell — every adb call uses argv, not
+// `sh -c`.
 
 use crate::error::{AppError, AppResult};
+use std::path::Path;
 
 /// One of the ten supported floating-panel actions.
 #[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
@@ -27,153 +41,137 @@ pub enum KeyAction {
     Close,
 }
 
+/// How an action maps onto adb. KeyEvent and Shell are dispatched here;
+/// Special actions (screenshot/close/rotate) are handled by the caller
+/// because they need extra state (file paths, process handles, multi-step
+/// rotation).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdbCommand {
+    /// `adb -s <serial> shell input keyevent <code>`
+    KeyEvent(u16),
+    /// `adb -s <serial> shell <args...>` — for commands that aren't keyevents.
+    Shell(&'static [&'static str]),
+    /// Handled out-of-band by the dispatcher (lib.rs).
+    Special(&'static str),
+}
+
 impl KeyAction {
-    /// Maps a button to the scrcpy keyboard shortcut it triggers.
-    ///
-    /// Source: scrcpy 4.0 mac shortcuts (PRD §3.2 mapping table).
-    /// First field is the literal key char, second is the modifier mask.
-    /// `cmd_shift = true` means Cmd+Shift, otherwise Cmd alone.
-    pub fn shortcut(self) -> Shortcut {
+    /// Maps a button to its adb realization. Android keycodes from
+    /// `android.view.KeyEvent`.
+    pub fn adb_command(self) -> AdbCommand {
         match self {
-            KeyAction::Home => Shortcut::cmd('h'),
-            KeyAction::Back => Shortcut::cmd('b'),
-            KeyAction::Recents => Shortcut::cmd('s'),
-            KeyAction::Lock => Shortcut::cmd('p'),
-            // Screenshot doesn't have a scrcpy shortcut — we'll handle it
-            // out-of-band via `adb shell screencap` in lib.rs. Marker only.
-            KeyAction::Screenshot => Shortcut::special("screenshot"),
-            KeyAction::VolumeUp => Shortcut::cmd('+'),
-            KeyAction::VolumeDown => Shortcut::cmd('-'),
-            // scrcpy uses Cmd+N to expand notifications.
-            KeyAction::Notifications => Shortcut::cmd('n'),
-            KeyAction::Rotate => Shortcut::cmd_shift('r'),
-            // Close is "kill scrcpy", handled by the Rust process layer.
-            KeyAction::Close => Shortcut::special("close"),
+            KeyAction::Home => AdbCommand::KeyEvent(3), // KEYCODE_HOME
+            KeyAction::Back => AdbCommand::KeyEvent(4), // KEYCODE_BACK
+            KeyAction::Recents => AdbCommand::KeyEvent(187), // KEYCODE_APP_SWITCH
+            KeyAction::Lock => AdbCommand::KeyEvent(26), // KEYCODE_POWER
+            KeyAction::VolumeUp => AdbCommand::KeyEvent(24), // KEYCODE_VOLUME_UP
+            KeyAction::VolumeDown => AdbCommand::KeyEvent(25), // KEYCODE_VOLUME_DOWN
+            // `cmd statusbar expand-notifications` is more reliable than
+            // KEYCODE_NOTIFICATION (83), which many ROMs ignore.
+            KeyAction::Notifications => {
+                AdbCommand::Shell(&["cmd", "statusbar", "expand-notifications"])
+            }
+            // Rotation needs read-modify-write of user_rotation — multi-step,
+            // handled by rotate_screen() below.
+            KeyAction::Rotate => AdbCommand::Special("rotate"),
+            // Screenshot pulls a PNG to the desktop (lib.rs).
+            KeyAction::Screenshot => AdbCommand::Special("screenshot"),
+            // Close kills the scrcpy process (lib.rs).
+            KeyAction::Close => AdbCommand::Special("close"),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Shortcut {
-    pub key: char,
-    pub cmd: bool,
-    pub shift: bool,
-    /// Set for non-keystroke actions (screenshot / close). The lib.rs
-    /// dispatcher branches on `special` before reaching osascript.
-    pub special: Option<&'static str>,
+/// Validate an adb serial (USB alphanumeric OR wireless IP[:port]). Delegates
+/// to scrcpy::is_valid_serial so the two modules can't drift — both build argv
+/// and need the same injection guard, and a wireless device's serial is an
+/// IP:port that must be accepted for key injection too.
+fn is_valid_serial(serial: &str) -> bool {
+    crate::scrcpy::is_valid_serial(serial)
 }
 
-impl Shortcut {
-    fn cmd(key: char) -> Self {
-        Self { key, cmd: true, shift: false, special: None }
-    }
-    fn cmd_shift(key: char) -> Self {
-        Self { key, cmd: true, shift: true, special: None }
-    }
-    fn special(tag: &'static str) -> Self {
-        Self { key: '\0', cmd: false, shift: false, special: Some(tag) }
-    }
+/// Build the full adb argv for a keyevent. Pure — unit-tested without adb.
+///
+///   build_keyevent_args("R5CX21RJ6MX", 3)
+///     => ["-s", "R5CX21RJ6MX", "shell", "input", "keyevent", "3"]
+pub fn build_keyevent_args(serial: &str, code: u16) -> Vec<String> {
+    vec![
+        "-s".into(),
+        serial.into(),
+        "shell".into(),
+        "input".into(),
+        "keyevent".into(),
+        code.to_string(),
+    ]
 }
 
-/// Build the AppleScript that sends a keystroke to scrcpy.
+/// Build the full adb argv for a shell command.
 ///
-/// scrcpy is NOT a macOS .app bundle — it's a plain SDL binary. Earlier
-/// we tried `set frontmost of process "scrcpy" to true` before keystroke,
-/// but that triggers a Cmd+H conflict: Cmd+H is both scrcpy's "Home" AND
-/// macOS's system "Hide Application" shortcut. When scrcpy is frontmost,
-/// both fire — the phone goes home (scrcpy handled it) and the scrcpy
-/// window hides (macOS handled it).
-///
-/// Fix: send the keystroke directly to the scrcpy process without
-/// activating it first. System Events allows this for background processes
-/// if Accessibility is granted. The trade-off: if another app is focused
-/// and steals the keystroke before it reaches scrcpy, this fails silently.
-/// In practice scrcpy is usually visible when the float panel is used, so
-/// the keystroke reaches it.
-///
-/// Output:
-///   tell application "System Events"
-///     tell process "scrcpy"
-///       keystroke "h" using {command down}
-///     end tell
-///   end tell
-pub fn build_applescript(shortcut: &Shortcut) -> AppResult<String> {
-    if shortcut.special.is_some() {
-        return Err(AppError::KeyInjectFailed(
-            "special action has no AppleScript".into(),
-        ));
+///   build_shell_args("R5CX21RJ6MX", &["cmd","statusbar","expand-notifications"])
+///     => ["-s","R5CX21RJ6MX","shell","cmd","statusbar","expand-notifications"]
+pub fn build_shell_args(serial: &str, cmd: &[&str]) -> Vec<String> {
+    let mut args = vec!["-s".into(), serial.into(), "shell".into()];
+    args.extend(cmd.iter().map(|s| s.to_string()));
+    args
+}
+
+/// Execute a keyevent/shell action against the device. Special actions
+/// return an error so the caller is forced to branch before calling here.
+pub async fn inject(action: KeyAction, serial: &str, adb_path: &Path) -> AppResult<()> {
+    if !is_valid_serial(serial) {
+        return Err(AppError::KeyInjectFailed(format!("非法设备序列号: {serial}")));
     }
-    if !shortcut.key.is_ascii() || shortcut.key.is_control() {
-        return Err(AppError::KeyInjectFailed(format!(
-            "non-ascii key: {:?}",
-            shortcut.key
-        )));
-    }
-    let mods = match (shortcut.cmd, shortcut.shift) {
-        (true, true) => " using {command down, shift down}",
-        (true, false) => " using {command down}",
-        (false, true) => " using {shift down}",
-        (false, false) => "",
+    let args = match action.adb_command() {
+        AdbCommand::KeyEvent(code) => build_keyevent_args(serial, code),
+        AdbCommand::Shell(cmd) => build_shell_args(serial, cmd),
+        AdbCommand::Special(tag) => {
+            return Err(AppError::KeyInjectFailed(format!(
+                "special action '{tag}' must be handled by the dispatcher"
+            )));
+        }
     };
-    Ok(format!(
-        "tell application \"System Events\"\n\
-         \ttell process \"scrcpy\"\n\
-         \t\tkeystroke \"{key}\"{mods}\n\
-         \tend tell\n\
-         end tell",
-        key = shortcut.key,
-        mods = mods,
-    ))
+    run_adb(adb_path, &args).await
 }
 
-/// Classify an osascript stderr line. macOS surfaces "not authorised for
-/// Accessibility" under several error codes and locales:
-///   -25211 (English: "not allowed assistive access")
-///    1002  (zh-CN: "osascript 不允许发送按键")
-///    -1719 (some older builds)
-/// Treat any of those as AccessibilityDenied so the UI can route the user
-/// to System Settings (PRD §3.3 last row).
-pub fn classify_osascript_stderr(stderr: &str) -> AppError {
-    let lower = stderr.to_lowercase();
-    let denied = stderr.contains("-25211")
-        || stderr.contains("(1002)")
-        || stderr.contains("-1719")
-        || lower.contains("not allowed assistive")
-        || lower.contains("not allowed to send keystrokes")
-        || stderr.contains("不允许发送按键")
-        || stderr.contains("不被允许")
-        || stderr.contains("辅助功能");
-    if denied {
-        AppError::AccessibilityDenied
-    } else {
-        AppError::KeyInjectFailed(stderr.trim().to_string())
+/// Rotate the screen one quarter turn. Disables auto-rotate first (otherwise
+/// the sensor snaps it back), then advances user_rotation (0→1→2→3→0).
+pub async fn rotate_screen(serial: &str, adb_path: &Path) -> AppResult<()> {
+    if !is_valid_serial(serial) {
+        return Err(AppError::KeyInjectFailed(format!("非法设备序列号: {serial}")));
     }
-}
+    // Pin auto-rotate off so the manual rotation sticks.
+    run_adb(
+        adb_path,
+        &build_shell_args(serial, &["settings", "put", "system", "accelerometer_rotation", "0"]),
+    )
+    .await?;
 
-/// Execute the action against a running scrcpy window.
-///
-/// Screenshot and close are special — they bypass osascript entirely.
-/// Everything else goes through `osascript -e <script>` which emits the
-/// keystroke into the scrcpy SDL window.
-pub async fn inject(action: KeyAction) -> AppResult<()> {
-    let shortcut = action.shortcut();
-    if let Some(tag) = shortcut.special {
-        // Special actions are dispatched by the caller (lib.rs). Returning
-        // an error keeps the contract explicit: callers MUST branch first.
-        return Err(AppError::KeyInjectFailed(format!(
-            "special action '{tag}' must be handled by the dispatcher"
-        )));
-    }
-    let script = build_applescript(&shortcut)?;
-    let out = tokio::process::Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
+    // Read current rotation (0-3), default 0 on any parse failure.
+    let out = tokio::process::Command::new(adb_path)
+        .args(build_shell_args(serial, &["settings", "get", "system", "user_rotation"]))
         .output()
         .await
-        .map_err(|e| AppError::KeyInjectFailed(format!("osascript spawn: {e}")))?;
+        .map_err(|e| AppError::KeyInjectFailed(format!("adb spawn: {e}")))?;
+    let current: u8 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0);
+    let next = (current + 1) % 4;
+
+    run_adb(
+        adb_path,
+        &build_shell_args(serial, &["settings", "put", "system", "user_rotation", &next.to_string()]),
+    )
+    .await
+}
+
+async fn run_adb(adb_path: &Path, args: &[String]) -> AppResult<()> {
+    let out = tokio::process::Command::new(adb_path)
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| AppError::KeyInjectFailed(format!("adb spawn: {e}")))?;
     if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(classify_osascript_stderr(&stderr));
+        return Err(AppError::KeyInjectFailed(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ));
     }
     Ok(())
 }
@@ -183,88 +181,76 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_action_has_a_shortcut() {
-        // Smoke-check: KeyAction → Shortcut never panics.
-        for action in [
-            KeyAction::Home, KeyAction::Back, KeyAction::Recents,
-            KeyAction::Lock, KeyAction::Screenshot, KeyAction::VolumeUp,
-            KeyAction::VolumeDown, KeyAction::Notifications,
-            KeyAction::Rotate, KeyAction::Close,
-        ] {
-            let _ = action.shortcut();
-        }
+    fn nav_actions_map_to_keyevents() {
+        assert_eq!(KeyAction::Home.adb_command(), AdbCommand::KeyEvent(3));
+        assert_eq!(KeyAction::Back.adb_command(), AdbCommand::KeyEvent(4));
+        assert_eq!(KeyAction::Recents.adb_command(), AdbCommand::KeyEvent(187));
+        assert_eq!(KeyAction::Lock.adb_command(), AdbCommand::KeyEvent(26));
+        assert_eq!(KeyAction::VolumeUp.adb_command(), AdbCommand::KeyEvent(24));
+        assert_eq!(KeyAction::VolumeDown.adb_command(), AdbCommand::KeyEvent(25));
     }
 
     #[test]
-    fn keystroke_actions_build_clean_applescript() {
-        let script = build_applescript(&KeyAction::Home.shortcut()).unwrap();
-        // No activation — send keystroke directly to the background process.
-        assert!(script.contains("tell process \"scrcpy\""));
-        assert!(script.contains("keystroke \"h\""));
-        assert!(script.contains("using {command down}"));
-        assert!(!script.contains("set frontmost")); // Should NOT activate.
+    fn notifications_maps_to_statusbar_shell() {
+        assert_eq!(
+            KeyAction::Notifications.adb_command(),
+            AdbCommand::Shell(&["cmd", "statusbar", "expand-notifications"])
+        );
     }
 
     #[test]
-    fn cmd_shift_renders_both_modifiers() {
-        let script = build_applescript(&KeyAction::Rotate.shortcut()).unwrap();
-        assert!(script.contains("keystroke \"r\""));
-        assert!(script.contains("{command down, shift down}"));
+    fn special_actions_are_marked_special() {
+        assert_eq!(KeyAction::Rotate.adb_command(), AdbCommand::Special("rotate"));
+        assert_eq!(KeyAction::Screenshot.adb_command(), AdbCommand::Special("screenshot"));
+        assert_eq!(KeyAction::Close.adb_command(), AdbCommand::Special("close"));
     }
 
     #[test]
-    fn screenshot_action_has_no_applescript() {
-        let s = KeyAction::Screenshot.shortcut();
-        assert!(s.special.is_some());
-        assert!(build_applescript(&s).is_err());
+    fn keyevent_args_have_serial_and_code() {
+        let args = build_keyevent_args("R5CX21RJ6MX", 3);
+        assert_eq!(
+            args,
+            vec!["-s", "R5CX21RJ6MX", "shell", "input", "keyevent", "3"]
+        );
     }
 
     #[test]
-    fn close_action_has_no_applescript() {
-        let s = KeyAction::Close.shortcut();
-        assert!(s.special.is_some());
-        assert!(build_applescript(&s).is_err());
+    fn keyevent_uses_correct_code_for_home() {
+        // The exact bug that hid the Mac window: Home must be Android
+        // KEYCODE_HOME (3), NOT a macOS Cmd+H keystroke.
+        let AdbCommand::KeyEvent(code) = KeyAction::Home.adb_command() else {
+            panic!("Home should be a keyevent");
+        };
+        let args = build_keyevent_args("ABCD1234", code);
+        assert_eq!(args.last().unwrap(), "3");
+        // Crucially: no "keystroke", no "command down", no osascript.
+        assert!(!args.iter().any(|a| a.contains("keystroke")));
     }
 
     #[test]
-    fn classify_recognises_accessibility_error() {
-        let stderr = "execution error: System Events got an error: osascript is not allowed assistive access. (-25211)";
-        assert!(matches!(
-            classify_osascript_stderr(stderr),
-            AppError::AccessibilityDenied
-        ));
+    fn shell_args_prepend_serial_and_shell() {
+        let args = build_shell_args("ABCD1234", &["cmd", "statusbar", "expand-notifications"]);
+        assert_eq!(
+            args,
+            vec!["-s", "ABCD1234", "shell", "cmd", "statusbar", "expand-notifications"]
+        );
     }
 
     #[test]
-    fn classify_recognises_chinese_accessibility_error() {
-        // Real macOS 14.x zh-CN output observed on the dev machine.
-        let stderr = "execution error: \"System Events\"遇到一个错误：\"osascript\"不允许发送按键。 (1002)";
-        assert!(matches!(
-            classify_osascript_stderr(stderr),
-            AppError::AccessibilityDenied
-        ));
+    fn inject_rejects_invalid_serial() {
+        let adb = Path::new("/usr/bin/false");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt.block_on(inject(KeyAction::Home, "bad; rm -rf /", adb));
+        assert!(matches!(err, Err(AppError::KeyInjectFailed(_))));
     }
 
     #[test]
-    fn classify_recognises_legacy_error_codes() {
-        for stderr in [
-            "execution error: not allowed assistive (-25211)",
-            "execution error: 不被允许 (-1719)",
-        ] {
-            assert!(matches!(
-                classify_osascript_stderr(stderr),
-                AppError::AccessibilityDenied
-            ), "should classify as denied: {stderr}");
-        }
-    }
-
-    #[test]
-    fn classify_falls_back_to_generic_failure() {
-        let err = classify_osascript_stderr("execution error: something else (-1)");
-        match err {
-            AppError::KeyInjectFailed(msg) => assert!(msg.contains("something else")),
-            other => panic!("expected KeyInjectFailed, got {other:?}"),
-        }
+    fn inject_rejects_special_actions() {
+        let adb = Path::new("/usr/bin/true");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // Valid serial, but Close is special → must be rejected here.
+        let err = rt.block_on(inject(KeyAction::Close, "R5CX21RJ6MX", adb));
+        assert!(matches!(err, Err(AppError::KeyInjectFailed(_))));
     }
 
     #[test]
@@ -275,8 +261,6 @@ mod tests {
 
     #[test]
     fn unknown_key_action_deserialise_fails() {
-        // Defends the trust boundary: the frontend can only send known
-        // actions. Garbage gets rejected at the deserialisation seam.
         let result: Result<KeyAction, _> = serde_json::from_str("\"sudo_rm_rf\"");
         assert!(result.is_err());
     }

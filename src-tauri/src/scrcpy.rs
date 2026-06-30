@@ -17,10 +17,16 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 const RING_CAPACITY: usize = 200;
 
-// Validate an adb serial: alphanumeric, 8–32 chars (PRD §5.2).
+// Validate an adb serial. Two shapes are allowed:
+//   - USB serial: alphanumeric, 8–32 chars (PRD §5.2).
+//   - Wireless serial: an IPv4[:port], e.g. "192.168.1.9:5555" — this is what
+//     `adb devices` reports for a network-connected device, so launching /
+//     keying a wireless device must accept it.
+// Both reach adb via argv (never a shell), so the dots/colons are safe.
 pub fn is_valid_serial(serial: &str) -> bool {
     let len = serial.len();
-    (8..=32).contains(&len) && serial.chars().all(|c| c.is_ascii_alphanumeric())
+    let alphanumeric = (8..=32).contains(&len) && serial.chars().all(|c| c.is_ascii_alphanumeric());
+    alphanumeric || is_valid_ip(serial)
 }
 
 // Validate an IPv4[:port] target (PRD §5.2).
@@ -85,6 +91,10 @@ impl LogRing {
         self.inner.lock().unwrap().back().cloned()
     }
 
+    pub fn snapshot(&self) -> Vec<String> {
+        self.inner.lock().unwrap().iter().cloned().collect()
+    }
+
     pub fn len(&self) -> usize {
         self.inner.lock().unwrap().len()
     }
@@ -101,10 +111,29 @@ pub async fn launch(serial: &str, preset_args: &[String]) -> AppResult<(tokio::p
         .ok_or_else(|| AppError::ScrcpyLaunchFailed("未找到 scrcpy".to_string()))?;
     let args = build_args(serial, preset_args)?;
 
-    let mut child = tokio::process::Command::new(bin)
-        .args(&args)
+    let mut cmd = tokio::process::Command::new(bin);
+    cmd.args(&args)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    // A Finder-launched .app does NOT inherit the shell PATH, so a bundled
+    // build can't find `adb` on its own — scrcpy then fails with "server
+    // connection failed". We resolve adb's absolute path ourselves and hand it
+    // to scrcpy two ways: the ADB env var (scrcpy reads it to locate adb) and
+    // a PATH prefix (covers any other tool scrcpy shells out to).
+    if let Some(adb) = crate::adb::detect_adb_path() {
+        cmd.env("ADB", &adb);
+        if let Some(dir) = adb.parent() {
+            let existing = std::env::var_os("PATH").unwrap_or_default();
+            let mut paths: Vec<std::path::PathBuf> = vec![dir.to_path_buf()];
+            paths.extend(std::env::split_paths(&existing));
+            if let Ok(joined) = std::env::join_paths(paths) {
+                cmd.env("PATH", joined);
+            }
+        }
+    }
+
+    let mut child = cmd
         .spawn()
         .map_err(|e| AppError::ScrcpyLaunchFailed(e.to_string()))?;
 
@@ -132,16 +161,28 @@ pub async fn launch(serial: &str, preset_args: &[String]) -> AppResult<(tokio::p
     Ok((child, stderr_ring))
 }
 
-// Gracefully stop a child: try a polite kill, wait up to 2s for exit, then
-// force-kill (PRD §5.3). tokio's Child::kill sends SIGKILL; we approximate the
-// SIGTERM→wait→SIGKILL ladder by polling try_wait first.
+// Gracefully stop a child: send SIGTERM, wait up to 2s for the process to
+// finalize (critical for `--record` to flush the moov atom — without it the
+// resulting .mp4 is unplayable), then force-kill if still alive.
+//
+// Why not tokio::Child::start_kill: despite older docs claiming SIGTERM, it
+// actually sends SIGKILL on Unix (verified in tokio 1.x source). SIGKILL gives
+// the process no chance to flush — recordings finalize, but only if SIGTERM
+// reaches them first. We use libc::kill directly to get true SIGTERM.
 pub async fn kill(mut child: tokio::process::Child) -> AppResult<()> {
     // Already exited?
     if let Ok(Some(_)) = child.try_wait() {
         return Ok(());
     }
-    // Politely request termination, then poll for up to 2 seconds.
-    let _ = child.start_kill();
+    if let Some(pid) = child.id() {
+        // SAFETY: libc::kill is safe to call with any pid + signal. The pid
+        // came from a process WE spawned; even if it has been reaped, kill()
+        // just returns ESRCH which we ignore — try_wait below catches exit.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+    }
+    // Poll for up to 2 seconds — scrcpy needs time to flush moov on --record.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
         if let Ok(Some(_)) = child.try_wait() {
@@ -168,11 +209,23 @@ mod tests {
     }
 
     #[test]
+    fn wireless_serials_accepted() {
+        // `adb devices` reports network devices as IP:port — must pass so a
+        // wireless device can launch scrcpy / receive key events.
+        assert!(is_valid_serial("192.168.137.189:5555"));
+        assert!(is_valid_serial("10.0.0.7:5555"));
+        // Bare IP (no port) also valid.
+        assert!(is_valid_serial("192.168.1.9"));
+    }
+
+    #[test]
     fn invalid_serials_rejected() {
         assert!(!is_valid_serial("short")); // < 8
         assert!(!is_valid_serial("abc; rm -rf /")); // metacharacters
         assert!(!is_valid_serial("$(whoami)"));
         assert!(!is_valid_serial(&"a".repeat(33))); // > 32
+        assert!(!is_valid_serial("999.1.1.1:5555")); // octet > 255 — not a real IP
+        assert!(!is_valid_serial("1.2.3.4; rm")); // injection via fake IP
     }
 
     #[test]
@@ -237,5 +290,45 @@ mod tests {
         assert!(kill(child).await.is_ok());
         // Must return well under the 2s SIGTERM grace (sleep dies on first signal).
         assert!(start.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn kill_actually_sends_sigterm_not_sigkill() {
+        // Regression guard for the recording-finalization bug: scrcpy needs
+        // SIGTERM (catchable) to flush --record's moov atom. SIGKILL leaves
+        // the .mp4 truncated and unplayable.
+        //
+        // The probe is a bash subprocess with a SIGTERM trap that writes a
+        // sentinel file. We use a busy loop (`while :; do :; done`) rather
+        // than `sleep`, because bash defers trap handlers until the current
+        // external command returns — `sleep` would swallow the signal until
+        // it finishes, defeating the test.
+        let dir = std::env::temp_dir();
+        let sentinel = dir.join(format!(
+            "scrcpy-kill-sigterm-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sentinel_str = sentinel.to_string_lossy().to_string();
+        let script = format!(
+            "trap 'echo got-term > {s}; exit 0' TERM; while :; do :; done",
+            s = sentinel_str
+        );
+        let child = tokio::process::Command::new("bash")
+            .args(["-c", &script])
+            .spawn()
+            .unwrap();
+        // Let the trap install before sending the signal.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(kill(child).await.is_ok());
+        // Give the trap a beat to flush the sentinel to disk.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(
+            sentinel.exists(),
+            "sentinel file missing at {sentinel_str} — kill() sent SIGKILL instead of SIGTERM"
+        );
+        let _ = std::fs::remove_file(&sentinel);
     }
 }
