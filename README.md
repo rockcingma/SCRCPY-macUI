@@ -18,7 +18,18 @@
 
 ### 简介
 
-scrcpy-mac-ui 是 [scrcpy](https://github.com/Genymobile/scrcpy) 的 macOS 图形化前端，让 Android 设备投屏变得更简单、更强大。
+scrcpy-mac-ui 是基于 [scrcpy](https://github.com/Genymobile/scrcpy) 开发的 macOS 图形化管理工具。
+
+**关于项目：**
+
+本项目是一个**小型工具项目**，专注于简化 Mac 用户使用 scrcpy 投屏 Android 手机的体验。scrcpy 是 Genymobile 开发的强大开源投屏工具，而本项目为其提供了：
+
+- 🖥️ **原生 macOS 界面** — 替代命令行操作
+- 🔌 **设备管理** — 自动检测和切换
+- ⚙️ **预设配置** — 无需记忆复杂参数
+- 🎮 **运行时控制** — 悬浮窗快捷操作
+
+**本质上**，这是一个 scrcpy 的 GUI 包装器（wrapper），底层投屏能力完全依赖 scrcpy，所有功劳归功于 scrcpy 原作者。
 
 **核心特性：**
 - 🎮 **多设备管理** — 自动检测，一键切换，智能状态提示
@@ -282,8 +293,10 @@ bun run tauri build
 
 ### 致谢
 
-- [scrcpy](https://github.com/Genymobile/scrcpy) — 强大的 Android 投屏工具
+- **[scrcpy](https://github.com/Genymobile/scrcpy)** — 本项目的核心依赖，由 Genymobile 开发的强大开源 Android 投屏工具。所有投屏能力归功于 scrcpy，本项目仅提供 macOS 图形界面封装。
 - [Tauri](https://tauri.app) — 跨平台桌面应用框架
+
+**特别说明：** 本项目是基于 scrcpy 的小型工具项目，不是 scrcpy 的官方客户端。如果遇到投屏相关的核心问题，请参考 [scrcpy 官方文档](https://github.com/Genymobile/scrcpy)。
 
 ---
 
@@ -291,7 +304,18 @@ bun run tauri build
 
 ### Introduction
 
-scrcpy-mac-ui is a macOS graphical frontend for [scrcpy](https://github.com/Genymobile/scrcpy), making Android screen mirroring simpler and more powerful.
+scrcpy-mac-ui is a macOS graphical management tool built upon [scrcpy](https://github.com/Genymobile/scrcpy).
+
+**About This Project:**
+
+This is a **small utility project** focused on simplifying the experience of using scrcpy for Mac users to mirror Android devices. scrcpy is a powerful open-source mirroring tool developed by Genymobile, and this project provides:
+
+- 🖥️ **Native macOS Interface** — Replacing command-line operations
+- 🔌 **Device Management** — Auto-detection and switching
+- ⚙️ **Preset Configurations** — No need to memorize complex parameters
+- 🎮 **Runtime Controls** — Float panel shortcuts
+
+**Essentially**, this is a GUI wrapper for scrcpy. The underlying mirroring capability is entirely dependent on scrcpy, and all credit goes to the original scrcpy authors.
 
 **Key Features:**
 - 🎮 **Multi-device Management** — Auto-detection, one-click switching, smart status indicators
@@ -530,8 +554,10 @@ bun run tauri build
 
 ### Acknowledgments
 
-- [scrcpy](https://github.com/Genymobile/scrcpy) — Powerful Android mirroring tool
+- **[scrcpy](https://github.com/Genymobile/scrcpy)** — The core dependency of this project. A powerful open-source Android mirroring tool developed by Genymobile. All mirroring capabilities are credited to scrcpy; this project only provides a macOS GUI wrapper.
 - [Tauri](https://tauri.app) — Cross-platform desktop framework
+
+**Important Note:** This is a small utility project built on scrcpy, not an official scrcpy client. For core mirroring issues, please refer to [scrcpy official documentation](https://github.com/Genymobile/scrcpy).
 
 ---
 
