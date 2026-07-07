@@ -76,6 +76,18 @@ pub fn window_bounds_for_pid(pid: u32) -> Option<WindowBounds> {
     best
 }
 
+/// Check if a window owned by `pid` is currently in the foreground.
+/// Uses CGWindowList to check if the window is at a high layer (layer 0).
+/// This is fast (~1ms) compared to AppleScript (200-500ms).
+pub fn is_pid_frontmost(pid: u32) -> bool {
+    // Fast path: just check if the PID has any window at layer 0.
+    // Layer 0 means normal application window, and if it's visible on screen
+    // (kCGWindowListOptionOnScreenOnly), it's effectively in foreground.
+    // This isn't 100% accurate (doesn't distinguish multiple apps at layer 0),
+    // but it's fast enough for follower polling and good enough for our use case.
+    window_bounds_for_pid(pid).is_some()
+}
+
 /// Look up a CFString key in a raw void-typed CFDictionary, returning an i64.
 fn dict_i64(dict: &RawDict, key: core_foundation::string::CFStringRef) -> Option<i64> {
     let key = unsafe { CFString::wrap_under_get_rule(key) };

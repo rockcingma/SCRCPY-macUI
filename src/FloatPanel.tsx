@@ -37,6 +37,9 @@ export function FloatPanel({ backend }: FloatPanelProps) {
   // Audio routing: true = Mac plays (scrcpy default), false = device plays.
   const [hostAudio, setHostAudio] = useState(true);
   const [audioBusy, setAudioBusy] = useState(false);
+  // Always-on-top toggle: true = scrcpy window stays on top of all others.
+  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [pinBusy, setPinBusy] = useState(false);
 
   const setButtonFlash = useCallback((action: KeyAction, kind: ButtonFlash) => {
     setFlash((prev) => ({ ...prev, [action]: kind }));
@@ -103,6 +106,19 @@ export function FloatPanel({ backend }: FloatPanelProps) {
       setAudioBusy(false);
     }
   }, [backend, audioBusy]);
+
+  const toggleAlwaysOnTop = useCallback(async () => {
+    if (pinBusy) return;
+    setPinBusy(true);
+    try {
+      const state = await backend.toggleAlwaysOnTop();
+      setAlwaysOnTop(state.alwaysOnTop);
+    } catch {
+      // Silently leave state unchanged on failure.
+    } finally {
+      setPinBusy(false);
+    }
+  }, [backend, pinBusy]);
 
   // Cmd+O shortcut. Scoped to this webview's keydown (not a system-global
   // shortcut) so the rest of macOS still owns Cmd+O — it only fires when our
@@ -171,6 +187,43 @@ export function FloatPanel({ backend }: FloatPanelProps) {
         <span className="audio-icon" aria-hidden>
           {hostAudio ? "♪" : "S"}
         </span>
+      </button>
+
+      {/* Always-on-top toggle — pin icon: tilted outline (unpinned) → upright solid (pinned). */}
+      <button
+        className={`pin-button ${alwaysOnTop ? "pinned" : ""}`}
+        aria-label={alwaysOnTop ? "取消固定" : "固定窗口"}
+        aria-pressed={alwaysOnTop}
+        data-tooltip={alwaysOnTop ? "取消固定" : "固定窗口在最前"}
+        disabled={pinBusy}
+        onClick={() => void toggleAlwaysOnTop()}
+      >
+        <svg
+          className="pin-icon"
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          {alwaysOnTop ? (
+            // Pinned: upright solid pin (vertical, filled)
+            <path
+              d="M8 2 L9.5 6 L11 6 L11 10 L9 10 L9 14 L7 14 L7 10 L5 10 L5 6 L6.5 6 Z"
+              fill="currentColor"
+            />
+          ) : (
+            // Unpinned: tilted outline pin (rotated, stroked)
+            <g transform="rotate(-45 8 8)">
+              <path
+                d="M8 2 L9.5 6 L11 6 L11 10 L9 10 L9 14 L7 14 L7 10 L5 10 L5 6 L6.5 6 Z"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                fill="none"
+              />
+            </g>
+          )}
+        </svg>
       </button>
 
       <div className="float-divider" aria-hidden />

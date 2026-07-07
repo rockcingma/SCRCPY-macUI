@@ -15,6 +15,7 @@ function fakeBackend(overrides: Partial<Backend> = {}): Backend {
     toggleRecording: vi.fn(async () => ({ recording: false, savedPath: null })),
     toggleScreenOff: vi.fn(async () => ({ screenOff: false })),
     toggleAudioHost: vi.fn(async () => ({ hostAudio: true })),
+    toggleAlwaysOnTop: vi.fn(async () => ({ alwaysOnTop: false })),
     enableTcpip: vi.fn(async () => "192.168.1.50"),
     pairWireless: vi.fn(async () => {}),
     setRecordDir: vi.fn(async (path: string | null) => ({

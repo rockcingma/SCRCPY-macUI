@@ -58,6 +58,18 @@ pub struct AppState {
     // snaps the float panel to its right edge so dragging scrcpy drags the
     // float with it). Aborted whenever scrcpy is replaced or stops.
     follower: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
+    // Always-on-top toggle. true = scrcpy window stays on top of all others.
+    // false (default) = normal window behavior. Like other runtime flags, this
+    // requires relaunching scrcpy with --always-on-top flag.
+    always_on_top: Arc<Mutex<bool>>,
+    // Original screen_off_timeout value (in ms) from the device, stored when
+    // screen_off is enabled so it can be restored when disabled. None = not
+    // captured yet or screen_off is inactive.
+    original_screen_timeout: Arc<Mutex<Option<String>>>,
+    // Last known position of scrcpy window (x, y in logical coordinates).
+    // Used to restore position when relaunching scrcpy (e.g., during toggle_*).
+    // None = use default position from layout module.
+    last_window_position: Arc<Mutex<Option<(i32, i32)>>>,
 }
 
 impl Default for AppState {
@@ -73,6 +85,9 @@ impl Default for AppState {
             host_audio: Arc::new(Mutex::new(true)),
             record_dir: Arc::new(Mutex::new(None)),
             follower: Arc::new(Mutex::new(None)),
+            always_on_top: Arc::new(Mutex::new(false)),
+            original_screen_timeout: Arc::new(Mutex::new(None)),
+            last_window_position: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -100,6 +115,14 @@ pub struct ScreenOffState {
 #[serde(rename_all = "camelCase")]
 pub struct AudioHostState {
     host_audio: bool,
+}
+
+/// Always-on-top state returned to the frontend (mirrors TS AlwaysOnTopState).
+/// true = scrcpy window stays on top; false = normal window behavior.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlwaysOnTopState {
+    always_on_top: bool,
 }
 
 /// Result of set_record_dir: tells the UI whether the chosen path was usable
@@ -210,10 +233,22 @@ async fn spawn_and_swap(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, AppState>,
 ) -> AppResult<()> {
-    // Pin scrcpy's window to the main window's monitor.
+    // Pin scrcpy's window to the main window's monitor. If we have a saved
+    // position from a previous launch, use it; otherwise fall back to the
+    // default layout position.
     let (ox, oy) = main_monitor_origin(app);
     let mut full_args = args.to_vec();
-    full_args.extend(layout::scrcpy_window_args(ox, oy));
+
+    let saved_pos = state.last_window_position.lock().await.clone();
+    if let Some((saved_x, saved_y)) = saved_pos {
+        // Use saved position (absolute screen coordinates).
+        full_args.push(format!("--window-x={}", saved_x));
+        full_args.push(format!("--window-y={}", saved_y));
+        full_args.push(format!("--window-height={}", layout::MIRROR_H as i64));
+    } else {
+        // Use default layout position.
+        full_args.extend(layout::scrcpy_window_args(ox, oy));
+    }
 
     let (mut child, stderr_ring) = scrcpy::launch(serial, &full_args).await?;
     let scrcpy_pid = child.id();
@@ -244,7 +279,21 @@ async fn spawn_and_swap(
         Some(pid) => read_scrcpy_bounds_retry(pid).await,
         None => None,
     };
-    show_float_window(app, bounds, ox, oy);
+
+    // Position float window. When we have saved position, bounds should be
+    // available since scrcpy will launch at that saved position. If bounds
+    // reading failed, use saved position + estimated width to place float.
+    let saved_pos = state.last_window_position.lock().await.clone();
+    if bounds.is_some() {
+        show_float_window(app, bounds);
+    } else if let Some((saved_x, saved_y)) = saved_pos {
+        // Fallback with saved position: estimate float position based on
+        // saved scrcpy position + typical portrait width.
+        show_float_window_at(app, saved_x, saved_y);
+    } else {
+        // Ultimate fallback: use monitor origin for default layout.
+        show_float_window_fallback(app, ox, oy);
+    }
 
     // Start (or restart) the follower so dragging scrcpy drags the float panel
     // with it. spawn_and_swap is called for fresh launches AND recording
@@ -278,15 +327,9 @@ fn read_scrcpy_bounds_retry(
     }
 }
 
-/// Show the float panel, raise it above scrcpy, and snap it to the right edge
-/// of scrcpy's real window (`bounds`). Falls back to the layout estimate when
-/// the bounds couldn't be read. Best-effort: never blocks a launch.
-fn show_float_window(
-    app: &tauri::AppHandle,
-    bounds: Option<winbounds::WindowBounds>,
-    ox: f64,
-    oy: f64,
-) {
+/// Show the float panel and snap it to the right edge of scrcpy's real window
+/// (`bounds`). Assumes bounds are available from read_scrcpy_bounds_retry.
+fn show_float_window(app: &tauri::AppHandle, bounds: Option<winbounds::WindowBounds>) {
     use tauri::LogicalPosition;
     let Some(float) = app.get_webview_window("float") else {
         return;
@@ -296,13 +339,45 @@ fn show_float_window(
     let _ = float.set_always_on_top(false);
     let _ = float.set_always_on_top(true);
 
-    let (x, y) = match bounds {
+    if let Some(b) = bounds {
         // Snap to scrcpy's real right edge + gap, aligned to its top.
-        Some(b) => (b.right_edge() + layout::GAP, b.y),
-        // Fallback: layout estimate from the monitor origin.
-        None => layout::float_position(ox, oy),
+        let _ = float.set_position(LogicalPosition::new(
+            b.right_edge() + layout::GAP,
+            b.y,
+        ));
+    }
+}
+
+/// Fallback float window positioning using layout estimates when scrcpy bounds
+/// couldn't be read (e.g., launch failure or no saved position).
+fn show_float_window_fallback(app: &tauri::AppHandle, ox: f64, oy: f64) {
+    use tauri::LogicalPosition;
+    let Some(float) = app.get_webview_window("float") else {
+        return;
     };
+    let _ = float.show();
+    let _ = float.set_always_on_top(false);
+    let _ = float.set_always_on_top(true);
+
+    let (x, y) = layout::float_position(ox, oy);
     let _ = float.set_position(LogicalPosition::new(x, y));
+}
+
+/// Position float window based on saved scrcpy position when bounds reading
+/// failed. Uses estimated portrait phone width to place float at right edge.
+fn show_float_window_at(app: &tauri::AppHandle, scrcpy_x: i32, scrcpy_y: i32) {
+    use tauri::LogicalPosition;
+    let Some(float) = app.get_webview_window("float") else {
+        return;
+    };
+    let _ = float.show();
+    let _ = float.set_always_on_top(false);
+    let _ = float.set_always_on_top(true);
+
+    // Estimate: scrcpy_x + typical portrait width (~430px) + gap.
+    let float_x = scrcpy_x as f64 + layout::MIRROR_W_EST + layout::GAP;
+    let float_y = scrcpy_y as f64;
+    let _ = float.set_position(LogicalPosition::new(float_x, float_y));
 }
 
 /// Hide the float panel (scrcpy stopped).
@@ -327,6 +402,7 @@ async fn start_follower(
     pid: u32,
 ) {
     let app = app.clone();
+    let last_pos = state.last_window_position.clone();
     let handle = tokio::spawn(async move {
         let mut last: Option<winbounds::WindowBounds> = None;
         let mut misses: u8 = 0;
@@ -338,11 +414,14 @@ async fn start_follower(
             .await
             .ok()
             .flatten();
+
             match bounds {
                 Some(b) => {
                     misses = 0;
                     if last != Some(b) {
                         reposition_float_window(&app, b);
+                        // Save window position for next relaunch (convert f64 to i32).
+                        *last_pos.lock().await = Some((b.x as i32, b.y as i32));
                         last = Some(b);
                     }
                 }
@@ -378,6 +457,17 @@ fn reposition_float_window(app: &tauri::AppHandle, bounds: winbounds::WindowBoun
             bounds.right_edge() + layout::GAP,
             bounds.y,
         ));
+    }
+}
+
+/// Sync float window's z-order (foreground/background) with scrcpy's state.
+/// When scrcpy is frontmost, float stays always-on-top. When scrcpy is in
+/// background, we remove always-on-top so float doesn't cover other apps.
+fn sync_float_z_order(app: &tauri::AppHandle, scrcpy_is_frontmost: bool) {
+    if let Some(float) = app.get_webview_window("float") {
+        // When scrcpy is frontmost, keep float always-on-top.
+        // When scrcpy is background, remove always-on-top so float goes back too.
+        let _ = float.set_always_on_top(scrcpy_is_frontmost);
     }
 }
 
@@ -669,6 +759,7 @@ async fn toggle_recording(
     let base = state.base_args.lock().await.clone();
     let screen_off = *state.screen_off.lock().await;
     let host_audio = *state.host_audio.lock().await;
+    let always_on_top = *state.always_on_top.lock().await;
     let currently_recording = state.recording.lock().await.is_some();
 
     if currently_recording {
@@ -677,7 +768,7 @@ async fn toggle_recording(
         // toggles are preserved across the relaunch by feeding them all back
         // into the composer.
         let saved = state.recording.lock().await.clone();
-        let args = compose_runtime_args(&base, screen_off, host_audio, None);
+        let args = compose_runtime_args(&base, screen_off, host_audio, always_on_top, None);
         spawn_and_swap(&serial, &args, &app, &state).await?;
         *state.recording.lock().await = None;
         Ok(RecordingState { recording: false, saved_path: saved })
@@ -686,7 +777,7 @@ async fn toggle_recording(
         // chosen directory (or the default if none has been picked).
         let dir = state.record_dir.lock().await.clone();
         let path = recording_path(dir.as_deref(), &serial)?;
-        let args = compose_runtime_args(&base, screen_off, host_audio, Some(&path));
+        let args = compose_runtime_args(&base, screen_off, host_audio, always_on_top, Some(&path));
         spawn_and_swap(&serial, &args, &app, &state).await?;
         *state.recording.lock().await = Some(path);
         Ok(RecordingState { recording: true, saved_path: None })
@@ -712,10 +803,29 @@ async fn toggle_screen_off(
     let base = state.base_args.lock().await.clone();
     let currently_off = *state.screen_off.lock().await;
     let host_audio = *state.host_audio.lock().await;
+    let always_on_top = *state.always_on_top.lock().await;
     let record_path = state.recording.lock().await.clone();
 
     let next_off = !currently_off;
-    let args = compose_runtime_args(&base, next_off, host_audio, record_path.as_deref());
+
+    // When enabling screen_off, also set system screen timeout to maximum to
+    // prevent device sleep. When disabling, restore the original value.
+    if next_off {
+        // Capture original timeout if not already stored.
+        if state.original_screen_timeout.lock().await.is_none() {
+            let original = read_screen_timeout(&serial).await.ok();
+            *state.original_screen_timeout.lock().await = original;
+        }
+        // Set to max (2147483647 ms = ~24 days) to prevent auto-sleep.
+        let _ = set_screen_timeout(&serial, "2147483647").await;
+    } else {
+        // Restore original timeout.
+        if let Some(original) = state.original_screen_timeout.lock().await.take() {
+            let _ = set_screen_timeout(&serial, &original).await;
+        }
+    }
+
+    let args = compose_runtime_args(&base, next_off, host_audio, always_on_top, record_path.as_deref());
     spawn_and_swap(&serial, &args, &app, &state).await?;
     *state.screen_off.lock().await = next_off;
     Ok(ScreenOffState { screen_off: next_off })
@@ -738,13 +848,41 @@ async fn toggle_audio_host(
     let base = state.base_args.lock().await.clone();
     let screen_off = *state.screen_off.lock().await;
     let currently = *state.host_audio.lock().await;
+    let always_on_top = *state.always_on_top.lock().await;
     let record_path = state.recording.lock().await.clone();
 
     let next = !currently;
-    let args = compose_runtime_args(&base, screen_off, next, record_path.as_deref());
+    let args = compose_runtime_args(&base, screen_off, next, always_on_top, record_path.as_deref());
     spawn_and_swap(&serial, &args, &app, &state).await?;
     *state.host_audio.lock().await = next;
     Ok(AudioHostState { host_audio: next })
+}
+
+/// Toggle always-on-top for scrcpy window. When enabled, scrcpy window stays
+/// above all other windows even when switching apps. Useful for side-by-side
+/// workflows. Relaunches scrcpy with --always-on-top flag.
+#[tauri::command]
+async fn toggle_always_on_top(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> AppResult<AlwaysOnTopState> {
+    let serial = state
+        .serial
+        .lock()
+        .await
+        .clone()
+        .ok_or(AppError::DeviceNotConnected)?;
+    let base = state.base_args.lock().await.clone();
+    let screen_off = *state.screen_off.lock().await;
+    let host_audio = *state.host_audio.lock().await;
+    let currently = *state.always_on_top.lock().await;
+    let record_path = state.recording.lock().await.clone();
+
+    let next = !currently;
+    let args = compose_runtime_args(&base, screen_off, host_audio, next, record_path.as_deref());
+    spawn_and_swap(&serial, &args, &app, &state).await?;
+    *state.always_on_top.lock().await = next;
+    Ok(AlwaysOnTopState { always_on_top: next })
 }
 
 /// Set the directory where future screen recordings land. The path is
@@ -840,6 +978,56 @@ async fn open_keyboard_settings(state: tauri::State<'_, AppState>) -> AppResult<
     Ok(())
 }
 
+/// Read the device's current screen_off_timeout setting (in milliseconds).
+/// Returns the value as a string, or an error if it can't be read.
+async fn read_screen_timeout(serial: &str) -> AppResult<String> {
+    let adb_path = adb::detect_adb_path().ok_or(AppError::AdbNotFound)?;
+    let output = tokio::process::Command::new(adb_path)
+        .args([
+            "-s",
+            serial,
+            "shell",
+            "settings",
+            "get",
+            "system",
+            "screen_off_timeout",
+        ])
+        .output()
+        .await
+        .map_err(|e| AppError::Io(e.to_string()))?;
+
+    if !output.status.success() {
+        return Err(AppError::Io("无法读取屏幕超时设置".into()));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Set the device's screen_off_timeout to the given value (in milliseconds).
+async fn set_screen_timeout(serial: &str, timeout_ms: &str) -> AppResult<()> {
+    let adb_path = adb::detect_adb_path().ok_or(AppError::AdbNotFound)?;
+    let output = tokio::process::Command::new(adb_path)
+        .args([
+            "-s",
+            serial,
+            "shell",
+            "settings",
+            "put",
+            "system",
+            "screen_off_timeout",
+            timeout_ms,
+        ])
+        .output()
+        .await
+        .map_err(|e| AppError::Io(e.to_string()))?;
+
+    if !output.status.success() {
+        return Err(AppError::Io("无法设置屏幕超时".into()));
+    }
+
+    Ok(())
+}
+
 /// Default directory for screen recordings — `~/Desktop`, matching the
 /// previous hard-coded behaviour of desktop_path().
 fn default_record_dir() -> Option<String> {
@@ -878,6 +1066,7 @@ fn compose_runtime_args(
     base: &[String],
     screen_off: bool,
     host_audio: bool,
+    always_on_top: bool,
     record_path: Option<&str>,
 ) -> Vec<String> {
     let mut args = base.to_vec();
@@ -892,6 +1081,11 @@ fn compose_runtime_args(
         // remains responsive. Pairing them is the documented scrcpy idiom.
         args.push("--turn-screen-off".into());
         args.push("--stay-awake".into());
+    }
+    if always_on_top {
+        // --always-on-top keeps scrcpy window above all other windows, even
+        // when switching to other apps. Useful for side-by-side workflows.
+        args.push("--always-on-top".into());
     }
     if let Some(path) = record_path {
         args.push(format!("--record={path}"));
@@ -938,6 +1132,7 @@ pub fn run() {
             toggle_recording,
             toggle_screen_off,
             toggle_audio_host,
+            toggle_always_on_top,
             set_record_dir,
             open_keyboard_settings,
         ])
@@ -1052,7 +1247,7 @@ mod tests {
     fn compose_runtime_args_passthrough_when_no_toggles_active() {
         let base = vec!["--max-size=1920".to_string(), "--max-fps=60".to_string()];
         // host_audio=true is the default ("Mac plays the audio"); no flag added.
-        let args = compose_runtime_args(&base, false, true, None);
+        let args = compose_runtime_args(&base, false, true, false, None);
         // Plain mirror relaunch — base args verbatim, no extra flags.
         assert_eq!(args, base);
     }
@@ -1061,7 +1256,7 @@ mod tests {
     fn compose_runtime_args_appends_record_flag_after_base() {
         let base = vec!["--max-size=1920".to_string(), "--max-fps=60".to_string()];
         let args =
-            compose_runtime_args(&base, false, true, Some("/Users/x/Desktop/scrcpy-DEV-1.mp4"));
+            compose_runtime_args(&base, false, true, false, Some("/Users/x/Desktop/scrcpy-DEV-1.mp4"));
         // Base args preserved in order, --record appended last.
         assert_eq!(args[0], "--max-size=1920");
         assert_eq!(args[1], "--max-fps=60");
@@ -1070,7 +1265,7 @@ mod tests {
 
     #[test]
     fn compose_runtime_args_works_with_empty_base() {
-        let args = compose_runtime_args(&[], false, true, Some("/tmp/a.mp4"));
+        let args = compose_runtime_args(&[], false, true, false, Some("/tmp/a.mp4"));
         assert_eq!(args, vec!["--record=/tmp/a.mp4"]);
     }
 
@@ -1080,7 +1275,7 @@ mod tests {
         // together — alone, Android locks the device after a moment and the
         // mirror stops being responsive. Verifying the pair so a future edit
         // can't drop one and silently break the feature.
-        let args = compose_runtime_args(&[], true, true, None);
+        let args = compose_runtime_args(&[], true, true, false, None);
         assert!(args.iter().any(|a| a == "--turn-screen-off"));
         assert!(args.iter().any(|a| a == "--stay-awake"));
     }
@@ -1088,7 +1283,7 @@ mod tests {
     #[test]
     fn compose_runtime_args_combines_screen_off_with_record() {
         let base = vec!["--max-fps=60".to_string()];
-        let args = compose_runtime_args(&base, true, true, Some("/tmp/a.mp4"));
+        let args = compose_runtime_args(&base, true, true, false, Some("/tmp/a.mp4"));
         // Base first, screen-off pair next, record last. (host_audio=true → no
         // --no-audio inserted between them.)
         assert_eq!(args[0], "--max-fps=60");
@@ -1101,7 +1296,7 @@ mod tests {
     fn compose_runtime_args_adds_no_audio_when_not_hosting() {
         // host_audio=false ⇒ device speakers play the audio (scrcpy doesn't
         // capture the stream at all).
-        let args = compose_runtime_args(&[], false, false, None);
+        let args = compose_runtime_args(&[], false, false, false, None);
         assert_eq!(args, vec!["--no-audio"]);
     }
 
@@ -1110,12 +1305,19 @@ mod tests {
         // --no-audio sits AFTER the user's preset but BEFORE --turn-screen-off
         // and --record, so a malformed preset never gets shoved past our flags.
         let base = vec!["--max-fps=60".to_string()];
-        let args = compose_runtime_args(&base, true, false, Some("/tmp/a.mp4"));
+        let args = compose_runtime_args(&base, true, false, false, Some("/tmp/a.mp4"));
         assert_eq!(args[0], "--max-fps=60");
         assert_eq!(args[1], "--no-audio");
         assert_eq!(args[2], "--turn-screen-off");
         assert_eq!(args[3], "--stay-awake");
         assert_eq!(args[4], "--record=/tmp/a.mp4");
+    }
+
+    #[test]
+    fn compose_runtime_args_adds_always_on_top_when_enabled() {
+        // always_on_top=true ⇒ --always-on-top flag keeps window on top.
+        let args = compose_runtime_args(&[], false, true, true, None);
+        assert!(args.iter().any(|a| a == "--always-on-top"));
     }
 
     #[test]

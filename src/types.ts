@@ -182,6 +182,12 @@ export interface AudioHostState {
   hostAudio: boolean;
 }
 
+// Always-on-top toggle. true = scrcpy window stays on top of all other windows,
+// false = normal window behavior (default).
+export interface AlwaysOnTopState {
+  alwaysOnTop: boolean;
+}
+
 // Result of set_record_dir. Reports both the directory that's actually now in
 // effect and whether the user's chosen path was accepted, so the UI can
 // surface "fell back to default because …" without a second round-trip.

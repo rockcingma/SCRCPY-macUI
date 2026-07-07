@@ -845,6 +845,47 @@ body:has(.float-panel) { background: transparent; }
 
 .audio-icon { line-height: 1; }
 
+/* Pin button (always-on-top toggle) — same visual weight as screen/audio toggles. */
+.pin-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0 auto;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 16px;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) ease-out;
+}
+
+.pin-button:hover { background: rgba(255, 255, 255, 0.12); }
+.pin-button:disabled { opacity: 0.5; cursor: default; }
+
+/* Pinned state: slightly brighter background + emphasized border. */
+.pin-button.pinned {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.45);
+  color: white;
+}
+
+.pin-icon {
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* SVG icon inherits button color */
+.pin-button svg {
+  display: block;
+}
+
 .float-divider {
   width: 24px;
   height: 1px;

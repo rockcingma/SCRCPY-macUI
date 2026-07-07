@@ -2,6 +2,7 @@
 // interface, not on @tauri-apps/api directly, so tests inject a fake.
 
 import type {
+  AlwaysOnTopState,
   AudioHostState,
   Device,
   KeyAction,
@@ -26,6 +27,7 @@ export interface Backend {
   toggleRecording(): Promise<RecordingState>;
   toggleScreenOff(): Promise<ScreenOffState>;
   toggleAudioHost(): Promise<AudioHostState>;
+  toggleAlwaysOnTop(): Promise<AlwaysOnTopState>;
   // Pass null to reset to the default (~/Desktop). The result tells you what
   // path is actually in effect afterwards.
   setRecordDir(path: string | null): Promise<RecordDirState>;
@@ -74,6 +76,10 @@ export const tauriBackend: Backend = {
   async toggleAudioHost() {
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke<AudioHostState>("toggle_audio_host");
+  },
+  async toggleAlwaysOnTop() {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<AlwaysOnTopState>("toggle_always_on_top");
   },
   async setRecordDir(path) {
     const { invoke } = await import("@tauri-apps/api/core");
